@@ -5,14 +5,14 @@
 local _
 
 -- Test values
-local VECTIS_ENCOUNTER_ID = 1721;
-local OMEGA_VECTOR_SPELL_ID = 159113;
-local LINGERING_INFECTION_SPELL_ID = 159386;
+-- local VECTIS_ENCOUNTER_ID = 1721;
+-- local OMEGA_VECTOR_SPELL_ID = 159113;
+-- local LINGERING_INFECTION_SPELL_ID = 159386;
 
 -- Actual vectis values
--- local VECTIS_ENCOUNTER_ID = 2134;
--- local OMEGA_VECTOR_SPELL_ID = 265129;
--- local LINGERING_INFECTION_SPELL_ID = 265127;
+local VECTIS_ENCOUNTER_ID = 2134;
+local OMEGA_VECTOR_SPELL_ID = 265129;
+local LINGERING_INFECTION_SPELL_ID = 265127;
 
 ------------------------------
 --      Initialization      --
