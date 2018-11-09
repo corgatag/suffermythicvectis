@@ -1,4 +1,4 @@
-package-as: FocusInterruptSounds
+package-as: SufferMythicVectis
 
 externals:
     Libs/LibStub: https://repos.wowace.com/wow/libstub/tags/1.0
