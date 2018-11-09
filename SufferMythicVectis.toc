@@ -1,0 +1,15 @@
+## Interface: 80000
+
+## Title: Suffer Mythic Vectis |cff7fff7f -Ace3-|r
+## Version: 4.0
+## Author: Corg
+## X-Category: Boss Encounters
+## X-Website: http://www.wowace.com/wiki/SufferMythicVectis
+## Notes: Addon-ified and enhanced version of Zuggie's WeakAura
+## SavedVariables: SufferMythicVectisDB
+
+## OptionalDeps: Ace3
+
+embeds.xml
+
+SufferMythicVectis.lua
