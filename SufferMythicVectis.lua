@@ -5,14 +5,16 @@
 local _
 
 -- Test values
--- local VECTIS_ENCOUNTER_ID = 1721;
--- local OMEGA_VECTOR_SPELL_ID = 159113;
--- local LINGERING_INFECTION_SPELL_ID = 159386;
+--local VECTIS_ENCOUNTER_ID = 1721;
+--local OMEGA_VECTOR_SPELL_ID = 159113;
+--local LINGERING_INFECTION_SPELL_ID = 159386;
+--local CONTAGION_SPELL_ID = 158986;
 
 -- Actual vectis values
 local VECTIS_ENCOUNTER_ID = 2134;
 local OMEGA_VECTOR_SPELL_ID = 265129;
 local LINGERING_INFECTION_SPELL_ID = 265127;
+local CONTAGION_SPELL_ID = 267242;
 
 ------------------------------
 --      Initialization      --
@@ -38,6 +40,7 @@ function SufferMythicVectis:OnInitialize()
 			fEnableSay = true,
 			fIgnoreMute = true,
 			fShowNext = true,
+			fShowSpread = true,
 			fShowDuration = true,
 		}
 	};
@@ -45,7 +48,6 @@ function SufferMythicVectis:OnInitialize()
 
 	-- Init stuff so we don't get nil errors
 	self.iEncounterId = 0;
-	self.iWrongIconCounter = 0;
 	self.iMyGroup = -1;
 	self.iMyRank = -1;
 	self.tbOmegaGroup = {};
@@ -90,7 +92,12 @@ function SufferMythicVectis:OnTick()
 		return;
 	end
 
+	if self.tmContagionStart then
+		self:CheckContagionStatus();
+	end
+
 	if self.textFrame then
+		self:RefreshGroupLingeringInfectionStacks();
 		self.textFrame.text:SetText(self:GetDisplayText());
 	end
 
@@ -115,7 +122,9 @@ function SufferMythicVectis:ENCOUNTER_START(strEvent, arg1)
 		self.tmLastNextNotification = nil;
 		self.tmLastWrongIconNotification = nil;
 		self.tbOmegaGroup, self.tbOmegaInfo = self:GetOmegaGroup();
-		self.nextSoaker = nil;
+		self.strNextSoaker = nil;
+		self.tmContagionStart = nil;
+		self.tmWrongIconStart = nil;
 
 		self:ChooseNextSoaker();
 
@@ -126,7 +135,7 @@ function SufferMythicVectis:ENCOUNTER_START(strEvent, arg1)
 		self.textFrame:Show();
 
 		if not self.ticker then
-			self.ticker = C_Timer.NewTicker(0.2, function() self:OnTick() end);
+			self.ticker = C_Timer.NewTicker(0.1, function() self:OnTick() end);
 		end
 
 	end
@@ -186,11 +195,23 @@ function SufferMythicVectis:COMBAT_LOG_EVENT_UNFILTERED(event)
 			self.tmOmegaVectorExpiration = select(6, self:FindDebuffById(strDestName, OMEGA_VECTOR_SPELL_ID));
 			self.tbOmegaInfo[strDestName].fHasOmegaVector = true;
 			self:DeferredChooseNextSoakerAndNotify();
+		elseif not self.strNextSoaker or UnitIsDeadOrGhost(self.strNextSoaker) then
+			-- Just a failsafe to reset the next soaker in case the UNIT_DIED hook didn't quite work
+			self:DeferredChooseNextSoakerAndNotify();
 		end
 
 		-- Raid leader should also do raid marks
 		if self.iMyRank >= 2 then
 			self:DeferredMarkRaid();
+		end
+
+	elseif strEventType == "SPELL_CAST_START" and varParam1 == CONTAGION_SPELL_ID then
+
+		if self:ShouldSpreadForContagion() then
+			self:CheckAndPlaySound("Sound\\Creature\\HoodWolf\\HoodWolfTransformPlayer01.ogg");
+			self.tmContagionStart = GetTime();
+			self.iContagionNextSound = 3;
+			self.fAnyoneTooClose = false;
 		end
 
 	elseif strEventType == "UNIT_DIED" then
@@ -205,18 +226,37 @@ function SufferMythicVectis:COMBAT_LOG_EVENT_UNFILTERED(event)
 end
 
 ---------------------------------------------------------------------------------------------------
---	SufferMythicVectis:GetClassColoredName
+--	SufferMythicVectis:GetTruncatedClassColoredName
 --
---		Gets the name of the unit colored by its class
+--		Gets the name of the unit colored by its class (and truncated down to 8 characters)
 --
-function SufferMythicVectis:GetClassColoredName(unit)
+function SufferMythicVectis:GetTruncatedClassColoredName(strUnit)
 
-	local _, class = UnitClass(unit);
-	if class then
-		return RAID_CLASS_COLORS[class]:WrapTextInColorCode(UnitName(unit));
+	local _, strClass = UnitClass(strUnit);
+	local strName = self:GetTruncatedName(strUnit);
+	if strClass then
+		return RAID_CLASS_COLORS[strClass]:WrapTextInColorCode(strName);
 	else
-		return unit;
+		return strName;
 	end
+
+end
+
+---------------------------------------------------------------------------------------------------
+--	SufferMythicVectis:GetTruncatedName
+--
+--		Gets the name of the unit, truncated down to 8 characters
+--
+function SufferMythicVectis:GetTruncatedName(strUnit)
+
+	local strName = UnitName(strUnit) or strUnit;
+
+	if strlen(strName) > 8 then
+		return strsub(strName, 1, 8);
+	end
+
+	return strName;
+
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -353,7 +393,7 @@ end
 function SufferMythicVectis:CreateTextFrame()
 
 	self.textFrame = CreateFrame("Frame",nil,UIParent);
-	self.textFrame:SetSize(300, 180);
+	self.textFrame:SetSize(300, 204);
 
 	if self.db.profile.iFrameLeft and self.db.profile.iFrameTop then
 		self.textFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", self.db.profile.iFrameLeft, self.db.profile.iFrameTop);
@@ -398,43 +438,62 @@ end
 --
 function SufferMythicVectis:GetDisplayText()
 
-	if not self.nextSoaker then
-		return ""
+	if not self.strNextSoaker then
+		return "";
 	end
 
-	local duration = ""
-	local nextPlayer = ""
-	local seperator = ""
-	local now = GetTime()
+	local strSpread = "";
+	local strDuration = "";
+	local strNextPlayer = "";
+	local strSeperator = "";
+	local tmNow = GetTime();
 
-	self:RefreshGroupLingeringInfectionStacks();
+	if self.db.profile.fShowSpread then
+		if not self.tmContagionStart then
+			strSpread = "|cFF666666Spread: Not yet|r";
+		elseif self.fAnyoneTooClose then
+			strSpread = string.format("|cFFFF0000Spread: MORE! %ds|r", math.ceil(self.tmContagionStart + 6 - tmNow));
+		else
+			strSpread = string.format("|cFF12BC00Spread: OK! %ds|r", math.ceil(self.tmContagionStart + 6 - tmNow));
+		end
+	end
 
 	if self.db.profile.fShowNext then
-		nextPlayer = self:GetClassColoredName(self.nextSoaker) .. " Next"
+		strNextPlayer = self:GetTruncatedClassColoredName(self.strNextSoaker) .. " Next";
 	end
 
 	if self.db.profile.fShowNext and self.db.profile.fShowDuration then
-		seperator = ": "
+		strSeperator = ": ";
 	end
 
 	if self.db.profile.fShowDuration then
-		if not self.tmOmegaVectorExpiration or now > self.tmOmegaVectorExpiration then
-			duration = ""; 
-			seperator = "";
+		if not self.tmOmegaVectorExpiration or tmNow > self.tmOmegaVectorExpiration then
+			strDuration = ""; 
+			strSeperator = "";
 		else
-			duration = math.floor(self.tmOmegaVectorExpiration - now) .. "s";
+			strDuration = math.floor(self.tmOmegaVectorExpiration - tmNow) .. "s";
 		end
 	end
 
-	local result = nextPlayer .. seperator .. duration .. "\n\n";
-	for i,soaker in ipairs(self.tbOmegaGroup) do
-		if self.tbOmegaInfo[soaker].fHasOmegaVector then
-			result = string.format("%s|c%s%s: %s|r\n", result, "FFFF0000", self.tbOmegaGroup[i], self.tbOmegaInfo[soaker].iStacks)
-		elseif UnitIsDeadOrGhost(soaker) then
-			result = string.format("%s|c%s%s: %s|r\n", result, "FF666666", self.tbOmegaGroup[i], self.tbOmegaInfo[soaker].iStacks)
-		else
-			result = string.format("%s%s: %s\n", result, self:GetClassColoredName(self.tbOmegaGroup[i]), self.tbOmegaInfo[soaker].iStacks)
+	local result = strNextPlayer .. strSeperator .. strDuration .. "\n" .. strSpread .. "\n\n";
+	for i, strSoaker in ipairs(self.tbOmegaGroup) do
+
+		local strHighlightColor = nil;
+		if self.tbOmegaInfo[strSoaker].fHasOmegaVector then
+			strHighlightColor = "FFFF0000";
+		elseif UnitIsDeadOrGhost(strSoaker) then
+			strHighlightColor = "FF666666";
+		elseif self.strNextSoaker == strSoaker then
+			strHighlightColor = "FF12BC00";
 		end
+
+		--for j = 1, 5 do
+		if strHighlightColor then
+			result = string.format("%s|c%s%s: %s|r\n", result, strHighlightColor, self:GetTruncatedName(self.tbOmegaGroup[i]), self.tbOmegaInfo[strSoaker].iStacks)
+		else
+			result = string.format("%s%s: %s\n", result, self:GetTruncatedClassColoredName(self.tbOmegaGroup[i]), self.tbOmegaInfo[strSoaker].iStacks);
+		end
+		--end
 	end
 
 	return result;
@@ -480,12 +539,12 @@ function SufferMythicVectis:ChooseNextSoaker()
 	-- Choose the next soaker amongst the valid targets
 	for i, soaker in ipairs(self.tbOmegaGroup) do
 		if not self.tbOmegaInfo[soaker].fHasOmegaVector and UnitExists(soaker) and not UnitIsDeadOrGhost(soaker) then
-			if not self.nextSoaker or
-				self.tbOmegaInfo[self.nextSoaker].fHasOmegaVector or
-				self.tbOmegaInfo[soaker].iStacks < self.tbOmegaInfo[self.nextSoaker].iStacks or
-				(self.tbOmegaInfo[soaker].iStacks == self.tbOmegaInfo[self.nextSoaker].iStacks and self.tbOmegaInfo[soaker].iPosition < self.tbOmegaInfo[self.nextSoaker].iPosition) then
+			if not self.strNextSoaker or
+				self.tbOmegaInfo[self.strNextSoaker].fHasOmegaVector or
+				self.tbOmegaInfo[soaker].iStacks < self.tbOmegaInfo[self.strNextSoaker].iStacks or
+				(self.tbOmegaInfo[soaker].iStacks == self.tbOmegaInfo[self.strNextSoaker].iStacks and self.tbOmegaInfo[soaker].iPosition < self.tbOmegaInfo[self.strNextSoaker].iPosition) then
 
-				self.nextSoaker = soaker;
+				self.strNextSoaker = soaker;
 			end
 		end
 	end
@@ -504,7 +563,7 @@ function SufferMythicVectis:NotifyIfNextSoaker()
 	end
 
 	-- Notify the player if he is next at most once every 5 seconds
-	if self.nextSoaker == self.strPlayerName and (not self.tmLastNextNotification or GetTime() - self.tmLastNextNotification > 5) then
+	if self.strNextSoaker == self.strPlayerName and (not self.tmLastNextNotification or GetTime() - self.tmLastNextNotification > 5) then
 
 		self.tmLastNextNotification = GetTime();
 
@@ -521,6 +580,65 @@ function SufferMythicVectis:NotifyIfNextSoaker()
 end
 
 ---------------------------------------------------------------------------------------------------
+--	SufferMythicVectis:ShouldSpreadForContagion
+--
+--		Returns true if the player should spread for contagion.  (Either has 6 stacks or about to)
+--
+function SufferMythicVectis:ShouldSpreadForContagion()
+
+	local iStackCount = self:GetLingeringInfectionCount("player");
+	return iStackCount >= 6 or (iStackCount == 5 and self:FindDebuffById("player", OMEGA_VECTOR_SPELL_ID));
+
+end
+
+---------------------------------------------------------------------------------------------------
+--	SufferMythicVectis:CheckContagionStatus
+--
+--		Checks and to see if the player is too close to others and plays a status sound
+--		at 3, 4, 5, and 6 seconds after the start of the contagion cast.
+--
+function SufferMythicVectis:CheckContagionStatus()
+
+	-- Check to see if anyone is too close
+	self.fAnyoneTooClose = false;
+	if not UnitIsDeadOrGhost("player") then
+		for i = 1, 40 do
+			local strUnit = "raid" .. i;
+
+			if UnitExists(strUnit) and IsItemInRange(37727, strUnit) and not UnitIsUnit(strUnit, "player") and not UnitIsDeadOrGhost(strUnit) then 
+				self.fAnyoneTooClose = true;
+				break;
+			end
+		end
+	end
+
+	-- Check if it's time to play a status sound
+	local tmNow = GetTime();
+	if tmNow >= self.tmContagionStart + self.iContagionNextSound then
+
+		-- End the Contagion sequence before the 7th one plays a sound
+		if self.iContagionNextSound >= 7 then
+
+			self.tmContagionStart = nil;
+			self.iContagionNextSound = nil;
+			self.fAnyoneTooClose = nil;
+
+		else
+
+			self.iContagionNextSound = self.iContagionNextSound + 1;
+
+			if self.fAnyoneTooClose then
+				self:CheckAndPlaySound("Interface\\AddOns\\WeakAuras\\Media\\Sounds\\AirHorn.ogg");
+			else
+				self:CheckAndPlaySound("Interface\\Addons\\WeakAuras\\PowerAurasMedia\\Sounds\\sonar.ogg");
+			end
+
+		end
+	end
+
+end
+
+---------------------------------------------------------------------------------------------------
 --	SufferMythicVectis:CheckMyRaidIcon
 --
 --		Checks and warns the player if their raid icon is for a different group
@@ -530,13 +648,17 @@ function SufferMythicVectis:CheckMyRaidIcon()
 	local iIcon = GetRaidTargetIndex("player");
 
 	if iIcon and iIcon ~= self.iMyGroup and self:FindDebuffById("player", OMEGA_VECTOR_SPELL_ID) then
-		-- Increment counter
-		self.iWrongIconCounter = self.iWrongIconCounter + 1;
+		local tmNow = GetTime();
+
+		-- Start the wrong icon timer if it's not started yet
+		if not self.tmWrongIconStart then
+			self.tmWrongIconStart = tmNow;
+		end
 
 		-- If the icon has been wrong for at least 1 second, start notifying the player every 5 seconds
-		if self.iWrongIconCounter > 5 and (not self.tmLastWrongIconNotification or GetTime() - self.tmLastWrongIconNotification > 5) then
+		if tmNow - self.tmWrongIconStart > 1 and (not self.tmLastWrongIconNotification or tmNow - self.tmLastWrongIconNotification > 5) then
 
-			self.tmLastWrongIconNotification = GetTime();
+			self.tmLastWrongIconNotification = tmNow;
 
 			if self.db.profile.fEnableSound then
 				self:CheckAndPlaySound("Sound\\Doodad\\Goblin_Lottery_Open03.ogg");
@@ -549,8 +671,8 @@ function SufferMythicVectis:CheckMyRaidIcon()
 		end
 
 	else
-		-- Reset counter
-		self.iWrongIconCounter = 0;
+		-- Reset wrong icon timer
+		self.tmWrongIconStart = nil;
 	end
 
 end
