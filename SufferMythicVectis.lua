@@ -149,8 +149,10 @@ end
 --
 function SufferMythicVectis:ENCOUNTER_END(strEvent, arg1)
 
-	self:OutputMessage("Vectis encounter ended");
-	self.iEncounterId = 0;
+	if self.iEncounterId ~= 0 then
+		self:OutputMessage("Vectis encounter ended");
+		self.iEncounterId = 0;
+	end
 
 	if self.textFrame then
 		self.textFrame:Hide();
