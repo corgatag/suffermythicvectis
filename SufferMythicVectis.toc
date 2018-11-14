@@ -1,7 +1,7 @@
 ## Interface: 80000
 
 ## Title: Suffer Mythic Vectis |cff7fff7f -Ace3-|r
-## Version: 1.0
+## Version: 1.2
 ## Author: Corg
 ## X-Category: Boss Encounters
 ## X-Website: http://www.wowace.com/wiki/SufferMythicVectis

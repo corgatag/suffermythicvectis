@@ -4,17 +4,15 @@
 
 local _
 
--- Test values
---local VECTIS_ENCOUNTER_ID = 1721;
---local OMEGA_VECTOR_SPELL_ID = 159113;
---local LINGERING_INFECTION_SPELL_ID = 159386;
---local CONTAGION_SPELL_ID = 158986;
-
 -- Actual vectis values
 local VECTIS_ENCOUNTER_ID = 2134;
 local OMEGA_VECTOR_SPELL_ID = 265129;
 local LINGERING_INFECTION_SPELL_ID = 265127;
 local CONTAGION_SPELL_ID = 267242;
+local MYTHIC_RAID_DIFFICULTY = 16;
+
+-- Test values, uncomment to test on Kargath
+--VECTIS_ENCOUNTER_ID, OMEGA_VECTOR_SPELL_ID, LINGERING_INFECTION_SPELL_ID, CONTAGION_SPELL_ID = 1721, 159113, 159386, 158986;
 
 ------------------------------
 --      Initialization      --
@@ -48,12 +46,12 @@ function SufferMythicVectis:OnInitialize()
 
 	-- Init stuff so we don't get nil errors
 	self.iEncounterId = 0;
+	self.iDifficultyIndex = 0;
 	self.iMyGroup = -1;
 	self.iMyRank = -1;
 	self.tbOmegaGroup = {};
 	self.tbOmegaInfo = {};
 	self.fChooseNextSoakerAndNotifyQueued = false;
-
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -118,6 +116,9 @@ function SufferMythicVectis:ENCOUNTER_START(strEvent, arg1)
 
 		self:OutputMessage("Vectis encounter started");
 
+		local _, _, difficultyIndex = GetInstanceInfo();
+
+		self.iDifficultyIndex = difficultyIndex;
 		self.tmOmegaVectorExpiration = nil;
 		self.tmLastNextNotification = nil;
 		self.tmLastWrongIconNotification = nil;
@@ -149,10 +150,11 @@ end
 --
 function SufferMythicVectis:ENCOUNTER_END(strEvent, arg1)
 
-	if self.iEncounterId ~= 0 then
+	if self.iEncounterId == VECTIS_ENCOUNTER_ID then
 		self:OutputMessage("Vectis encounter ended");
-		self.iEncounterId = 0;
 	end
+
+	self.iEncounterId = 0;
 
 	if self.textFrame then
 		self.textFrame:Hide();
@@ -587,6 +589,11 @@ end
 --		Returns true if the player should spread for contagion.  (Either has 6 stacks or about to)
 --
 function SufferMythicVectis:ShouldSpreadForContagion()
+
+	-- Players only need to spread for contagion on Mythic difficulty
+	if self.iDifficultyIndex ~= MYTHIC_RAID_DIFFICULTY then
+		return false;
+	end
 
 	local iStackCount = self:GetLingeringInfectionCount("player");
 	return iStackCount >= 6 or (iStackCount == 5 and self:FindDebuffById("player", OMEGA_VECTOR_SPELL_ID));
