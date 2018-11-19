@@ -40,6 +40,7 @@ function SufferMythicVectis:OnInitialize()
 			fShowNext = true,
 			fShowSpread = true,
 			fShowDuration = true,
+			fMythicOnly = true,
 		}
 	};
 	self.db = LibStub("AceDB-3.0"):New("SufferMythicVectisDB", DEFAULTS, "default");
@@ -114,29 +115,39 @@ function SufferMythicVectis:ENCOUNTER_START(strEvent, arg1)
 
 	if self.iEncounterId == VECTIS_ENCOUNTER_ID then
 
-		self:OutputMessage("Vectis encounter started");
-
+		-- Check difficulty
 		local _, _, difficultyIndex = GetInstanceInfo();
-
 		self.iDifficultyIndex = difficultyIndex;
-		self.tmOmegaVectorExpiration = nil;
-		self.tmLastNextNotification = nil;
-		self.tmLastWrongIconNotification = nil;
-		self.tbOmegaGroup, self.tbOmegaInfo = self:GetOmegaGroup();
-		self.strNextSoaker = nil;
-		self.tmContagionStart = nil;
-		self.tmWrongIconStart = nil;
 
-		self:ChooseNextSoaker();
+		if self.db.profile.fMythicOnly and self.iDifficultyIndex ~= MYTHIC_RAID_DIFFICULTY then
 
-		if not self.textFrame then
-			self:CreateTextFrame();
-		end
+			-- Depending on settings, only enable functionality on mythic difficulty
+			self.iEncounterId = 0;
 
-		self.textFrame:Show();
+		else
 
-		if not self.ticker then
-			self.ticker = C_Timer.NewTicker(0.1, function() self:OnTick() end);
+			self:OutputMessage("Vectis encounter started");
+
+			self.tmOmegaVectorExpiration = nil;
+			self.tmLastNextNotification = nil;
+			self.tmLastWrongIconNotification = nil;
+			self.tbOmegaGroup, self.tbOmegaInfo = self:GetOmegaGroup();
+			self.strNextSoaker = nil;
+			self.tmContagionStart = nil;
+			self.tmWrongIconStart = nil;
+
+			self:ChooseNextSoaker();
+
+			if not self.textFrame then
+				self:CreateTextFrame();
+			end
+
+			self.textFrame:Show();
+
+			if not self.ticker then
+				self.ticker = C_Timer.NewTicker(0.1, function() self:OnTick() end);
+			end
+
 		end
 
 	end
