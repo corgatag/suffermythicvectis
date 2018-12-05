@@ -4,6 +4,8 @@
 
 local _
 
+local INITIAL_FRAME_TEXT = "Suffer Mythic Vectis\n\nWaiting for encounter to start\n\nClick to drag this frame around\nType /smvf to hide";
+
 -- Actual vectis values
 local VECTIS_ENCOUNTER_ID = 2134;
 local OMEGA_VECTOR_SPELL_ID = 265129;
@@ -30,20 +32,132 @@ function SufferMythicVectis:OnInitialize()
 	-- Cache session constants
 	self.strPlayerName = UnitName("player");
 
-	-- Build the default settings array
+	-- Build the settings table
+	local options = {
+		type = "group",
+		name = "Suffer Mythic Vectis",
+		get = function(info) return self.db.profile[ info[#info] ] end,
+		set = function(info, value) self.db.profile[ info[#info] ] = value end,
+		args = {
+			General = {
+				order = 1,
+				type = "group",
+				name = "General Settings",
+				desc = "General Settings",
+				args = {
+
+					fMythicOnly = {
+						type = "toggle",
+						name = "Mythic only",
+						desc = "Only enable addon for Mythic Vectis",
+						order = 1,
+					},
+					fEnableSay = {
+						type = "toggle",
+						name = "Enable /say",
+						desc = "Uncheck to block all /say chat from this addon",
+						order = 2,
+					},
+					fEnableSound = {
+						type = "toggle",
+						name = "Enable sounds",
+						desc = "Uncheck to mute all sounds from this addon",
+						order = 3,
+					},
+					fIgnoreMute = {
+						type = "toggle",
+						name = "Ignore mute",
+						desc = "Uncheck to play sounds on the master channel (bypassing game sound mute)",
+						order = 4,
+					},
+					fOmegaGainedWarning= {
+						type = "toggle",
+						name = "Omega gained sound",
+						desc = "Play the same phone sound whenever you gain Omega Vector.",
+						order = 5,
+					},
+					fOmegaDoneSound = {
+						type = "toggle",
+						name = "Omega done sound",
+						desc = "Play the applause sound when you've dropped Omega Vector and are not next.",
+						order = 6,
+					},
+					fSpreadWarning = {
+						type = "toggle",
+						name = "Spread warning",
+						desc = "Warn the player when contagion is cast and the player must spread",
+						order = 7,
+					},
+					fMarkOmegaVector = {
+						type = "toggle",
+						name = "Mark omega",
+						desc = "(Raid lead only) Mark omega vector targets with group awareness (conflicts with DBM and BigWigs' algorithms).",
+						order = 8,
+					},
+					fWrongMarkWarning = {
+						type = "toggle",
+						name = "Wrong mark warning",
+						desc = "Plays a Goblin Engineering sound if your Omega Vector marker doesn't match your group's",
+						order = 9,
+					},
+					fShowNext = {
+						type = "toggle",
+						name = "Show next",
+						desc = "Show the next player in the text frame",
+						order = 10,
+					},
+					fShowSpread = {
+						type = "toggle",
+						name = "Show spread",
+						desc = "Show contagion spread status in the text frame",
+						order = 11,
+					},
+					fShowDuration = {
+						type = "toggle",
+						name = "Show omega timer",
+						desc = "Show Omega Vector expiration timer in text frame",
+						order = 12,
+					},
+					btnMovableFrame = {
+						type = "execute",
+						func = function() SufferMythicVectis:ToggleFrameVisibility() end,
+						name = "Show/Hide Frame",
+						desc = "Show/Hide the text frame so you can move it around",
+						order = 13,
+						width = "double",
+					},
+				},
+			},
+		},
+	};
+
 	local DEFAULTS = {
 		profile = {
 			fEnableOutputMessages = true,
+			fMythicOnly = true,
 			fEnableSound = true,
 			fEnableSay = true,
 			fIgnoreMute = true,
+			fOmegaDoneSound = true,
+			fOmegaGainedWarning = true,
+			fSpreadWarning = true,
+			fMarkOmegaVector = true,
+			fWrongMarkWarning = true,
 			fShowNext = true,
 			fShowSpread = true,
 			fShowDuration = true,
-			fMythicOnly = true,
 		}
 	};
 	self.db = LibStub("AceDB-3.0"):New("SufferMythicVectisDB", DEFAULTS, "default");
+
+	options.args.Profile = LibStub("AceDBOptions-3.0"):GetOptionsTable(self.db);
+	LibStub("AceConfig-3.0"):RegisterOptionsTable("Suffer Mythic Vectis", options);
+	LibStub("AceConfigDialog-3.0"):SetDefaultSize("Suffer Mythic Vectis", 640, 480);
+	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("Suffer Mythic Vectis", nil, nil, "General");
+	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("Suffer Mythic Vectis", "Profile", "Suffer Mythic Vectis", "Profile");
+	self:RegisterChatCommand("smv", function() LibStub("AceConfigDialog-3.0"):Open("Suffer Mythic Vectis") end);
+	self:RegisterChatCommand("smvf", function() SufferMythicVectis:ToggleFrameVisibility() end);
+
 
 	-- Init stuff so we don't get nil errors
 	self.iEncounterId = 0;
@@ -95,12 +209,22 @@ function SufferMythicVectis:OnTick()
 		self:CheckContagionStatus();
 	end
 
+	if self.db.profile.fOmegaDoneSound and self.tmNextOmegaDoneSound and GetTime() >= self.tmNextOmegaDoneSound then
+		-- Don't give the applause sound if the player is next
+		if self.strNextSoaker ~= self.strPlayerName then
+			self:CheckAndPlaySound("Interface\\AddOns\\WeakAuras\\Media\\Sounds\\Applause.ogg");
+		end
+		self.tmNextOmegaDoneSound = nil;
+	end
+
 	if self.textFrame then
 		self:RefreshGroupLingeringInfectionStacks();
 		self.textFrame.text:SetText(self:GetDisplayText());
 	end
 
-	self:CheckMyRaidIcon();
+	if self.db.profile.fWrongMarkWarning then
+		self:CheckMyRaidIcon();
+	end
 
 end
 
@@ -135,6 +259,7 @@ function SufferMythicVectis:ENCOUNTER_START(strEvent, arg1)
 			self.strNextSoaker = nil;
 			self.tmContagionStart = nil;
 			self.tmWrongIconStart = nil;
+			self.tmNextOmegaDoneSound = nil;
 
 			self:ChooseNextSoaker();
 
@@ -197,14 +322,35 @@ function SufferMythicVectis:COMBAT_LOG_EVENT_UNFILTERED(event)
 		-- Update state when Omega Vector is removed
 		--self:OutputMessage("Omega vector fell off " .. strDestName);
 
-		if self.tbOmegaInfo[strDestName] then
-			self.tbOmegaInfo[strDestName].fHasOmegaVector = false;
+		local isSelf = UnitIsUnit(strDestName, "player");
+
+		if (isSelf or self.tbOmegaInfo[strDestName]) then
+			-- It could be that just one stack of multiple fell off.  Double check that the unit really doesn't have any omega vectors left
+			if not self:FindDebuffById(strDestName, OMEGA_VECTOR_SPELL_ID) then
+
+				if self.tbOmegaInfo[strDestName] then
+					self.tbOmegaInfo[strDestName].fHasOmegaVector = false;
+				end
+
+				if isSelf then
+					-- Queue an "Omega Vector Done" sound if the player still doesn't have omega vector after 2 seconds
+					self.tmNextOmegaDoneSound = GetTime() + 2;
+				end
+			end
 		end
 
 	elseif strEventType == "SPELL_AURA_APPLIED" and varParam1 == OMEGA_VECTOR_SPELL_ID then
 
 		-- Update state when Omega Vector is applied
 		--self:OutputMessage("Omega vector applied to " .. strDestName);
+
+		if (UnitIsUnit(strDestName, "player")) then
+			self.tmNextOmegaDoneSound = nil;
+
+			if self.db.profile.fOmegaGainedWarning then
+				self:CheckAndPlaySound("Interface\\AddOns\\WeakAuras\\PowerAurasMedia\\Sounds\\Phone.ogg");
+			end
+		end
 
 		if self.tbOmegaInfo[strDestName] then
 			self.tmOmegaVectorExpiration = select(6, self:FindDebuffById(strDestName, OMEGA_VECTOR_SPELL_ID));
@@ -216,7 +362,7 @@ function SufferMythicVectis:COMBAT_LOG_EVENT_UNFILTERED(event)
 		end
 
 		-- Raid leader should also do raid marks
-		if self.iMyRank >= 2 then
+		if self.iMyRank >= 2 and self.db.profile.fMarkOmegaVector then
 			self:DeferredMarkRaid();
 		end
 
@@ -438,11 +584,29 @@ function SufferMythicVectis:CreateTextFrame()
 	self.textFrame.text:SetPoint("BOTTOMRIGHT",-5,5);
 	self.textFrame.text:SetJustifyH("LEFT");
 	self.textFrame.text:SetJustifyV("TOP");
-	self.textFrame.text:SetText(" ");
+	self.textFrame.text:SetText(INITIAL_FRAME_TEXT);
 
 	self.textFrame.background = self.textFrame:CreateTexture(nil, "BACKGROUND");
 	self.textFrame.background:SetColorTexture(0, 0, 0, 0.5);
 	self.textFrame.background:SetAllPoints();
+
+end
+
+---------------------------------------------------------------------------------------------------
+--	SufferMythicVectis:ToggleFrameVisibility
+--
+--		Toggle the visibility of the frame so it can be moved around
+--
+function SufferMythicVectis:ToggleFrameVisibility()
+
+	if not self.textFrame then
+		self:CreateTextFrame();
+		self.textFrame:Show();
+	elseif self.textFrame:IsShown() then
+		self.textFrame:Hide();
+	else
+		self.textFrame:Show();
+	end
 
 end
 
@@ -454,7 +618,7 @@ end
 function SufferMythicVectis:GetDisplayText()
 
 	if not self.strNextSoaker then
-		return "";
+		return INITIAL_FRAME_TEXT;
 	end
 
 	local strSpread = "";
@@ -582,9 +746,7 @@ function SufferMythicVectis:NotifyIfNextSoaker()
 
 		self.tmLastNextNotification = GetTime();
 
-		if self.db.profile.fEnableSound then
-			self:CheckAndPlaySound("Interface\\AddOns\\WeakAuras\\PowerAurasMedia\\Sounds\\Phone.ogg");
-		end
+		self:CheckAndPlaySound("Interface\\AddOns\\WeakAuras\\PowerAurasMedia\\Sounds\\Phone.ogg");
 
 		if self.db.profile.fEnableSay then
 			SendChatMessage(self.strPlayerName .." next!", "SAY");
@@ -600,6 +762,10 @@ end
 --		Returns true if the player should spread for contagion.  (Either has 6 stacks or about to)
 --
 function SufferMythicVectis:ShouldSpreadForContagion()
+
+	if not self.db.profile.fSpreadWarning then
+		return false;
+	end
 
 	-- Players only need to spread for contagion on Mythic difficulty
 	if self.iDifficultyIndex ~= MYTHIC_RAID_DIFFICULTY then
@@ -680,9 +846,7 @@ function SufferMythicVectis:CheckMyRaidIcon()
 
 			self.tmLastWrongIconNotification = tmNow;
 
-			if self.db.profile.fEnableSound then
-				self:CheckAndPlaySound("Sound\\Doodad\\Goblin_Lottery_Open03.ogg");
-			end
+			self:CheckAndPlaySound("Sound\\Doodad\\Goblin_Lottery_Open03.ogg");
 
 			if self.db.profile.fEnableSay then
 				SendChatMessage(self.strPlayerName .." move to {rt" .. iIcon .. "}", "SAY");
